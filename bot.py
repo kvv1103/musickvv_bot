@@ -1,205 +1,188 @@
-import os
-import sqlite3
+import asyncio
 import random
-from telebot import TeleBot, types
+import aiosqlite
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from config import BOT_TOKEN
 
-# 🔹 Твій токен
-API_TOKEN = "ТВОЙ_АПІ_КЛЮЧ"
-bot = TeleBot(API_TOKEN)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-# 🔹 Підключення до бази даних
-os.makedirs("db", exist_ok=True)
-conn = sqlite3.connect("db/music.db", check_same_thread=False)
-cur = conn.cursor()
+DB_PATH = "db/music.db"
 
-# 🔹 Створення таблиць, якщо ще немає
-cur.execute("""
-CREATE TABLE IF NOT EXISTS tracks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    username TEXT,
-    title TEXT,
-    file_id TEXT,
-    playlist TEXT
-)
-""")
+# ================== Ініціалізація бази ==================
+async def init_db():
+    import os
+    os.makedirs("db", exist_ok=True)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            title TEXT,
+            file_id TEXT,
+            playlist TEXT
+        )
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS playlists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            name TEXT
+        )
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_state (
+            user_id INTEGER PRIMARY KEY,
+            current_playlist TEXT
+        )
+        """)
+        await db.commit()
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS playlists (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    name TEXT
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS user_state (
-    user_id INTEGER PRIMARY KEY,
-    current_playlist TEXT
-)
-""")
-
-conn.commit()
-
-
-# 🔹 Глобальні режими відтворення
+# ================== Режими відтворення ==================
 play_modes = {
     "sequential": "▶️ Підряд усі",
     "shuffle": "🔀 Випадково",
     "repeat_one": "🔂 Повтор поточного"
 }
-current_mode = "sequential"
+user_modes = {}  # зберігає режим для кожного користувача
 
-
-# 🟢 Старт
-@bot.message_handler(commands=['start'])
-def start(message):
+# ================== Старт ==================
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    bot.send_message(
-        message.chat.id,
-        "🎧 Привіт! Це музичний бот.\n\n"
-        "📂 Ти можеш:\n"
-        "• Надіслати трек — щоб додати у поточний плейліст\n"
-        "• Створити новий — /createplaylist\n"
-        "• Перемкнутись на інший — /chooseplaylist\n"
-        "• Подивитись свої плейлісти — /myplaylists\n"
-        "• Слухати музику — /play\n"
-        "• Змінити режим — /mode"
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Створення стандартного плейліста, якщо новий користувач
+        await db.execute("INSERT OR IGNORE INTO playlists (user_id, name) VALUES (?, ?)", (user_id, "default"))
+        await db.execute("INSERT OR IGNORE INTO user_state (user_id, current_playlist) VALUES (?, ?)", (user_id, "default"))
+        await db.commit()
+    await message.answer(
+        "🎧 Привіт! Музичний бот на aiogram.\n\n"
+        "📂 Команди:\n"
+        "/createplaylist — створити новий плейліст\n"
+        "/chooseplaylist — вибір активного плейліста\n"
+        "/myplaylists — переглянути свої плейлісти\n"
+        "/play — відтворення поточного плейліста\n"
+        "/mode — змінити режим відтворення\n"
+        "Надішли аудіо — щоб додати його у поточний плейліст."
     )
 
-    # Якщо користувач ще не має активного плейлісту — створюємо стандартний
-    cur.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
-    row = cur.fetchone()
-    if not row:
-        cur.execute("INSERT OR REPLACE INTO user_state (user_id, current_playlist) VALUES (?, ?)", (user_id, "default"))
-        cur.execute("INSERT OR IGNORE INTO playlists (user_id, name) VALUES (?, ?)", (user_id, "default"))
-        conn.commit()
+# ================== Створення плейліста ==================
+@dp.message(Command("createplaylist"))
+async def create_playlist(message: types.Message):
+    await message.answer("Введи назву нового плейліста:")
+    await dp.register_message_handler(save_playlist, state=None, content_types=types.ContentTypes.TEXT, lambda message: True)
 
-
-# 🟢 Створення нового плейлісту
-@bot.message_handler(commands=['createplaylist'])
-def create_playlist(message):
-    bot.send_message(message.chat.id, "🎵 Введи назву нового плейлісту:")
-    bot.register_next_step_handler(message, save_playlist)
-
-
-def save_playlist(message):
+async def save_playlist(message: types.Message):
     name = message.text.strip()
     user_id = message.from_user.id
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO playlists (user_id, name) VALUES (?, ?)", (user_id, name))
+        await db.execute("UPDATE user_state SET current_playlist=? WHERE user_id=?", (name, user_id))
+        await db.commit()
+    await message.answer(f"✅ Плейліст '{name}' створено і обрано активним.")
 
-    cur.execute("INSERT INTO playlists (user_id, name) VALUES (?, ?)", (user_id, name))
-    cur.execute("UPDATE user_state SET current_playlist=? WHERE user_id=?", (name, user_id))
-    conn.commit()
-
-    bot.send_message(message.chat.id, f"✅ Плейліст '{name}' створено і обрано активним.")
-
-
-# 🟢 Перегляд своїх плейлістів
-@bot.message_handler(commands=['myplaylists'])
-def my_playlists(message):
+# ================== Перегляд плейлістів ==================
+@dp.message(Command("myplaylists"))
+async def my_playlists(message: types.Message):
     user_id = message.from_user.id
-    cur.execute("SELECT name FROM playlists WHERE user_id=?", (user_id,))
-    playlists = [p[0] for p in cur.fetchall()]
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT name FROM playlists WHERE user_id=?", (user_id,))
+        playlists = [row[0] for row in await cursor.fetchall()]
+        cursor = await db.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
+        current = (await cursor.fetchone())[0]
 
     if not playlists:
-        bot.send_message(message.chat.id, "❌ У тебе ще немає плейлістів.")
+        await message.answer("❌ У тебе ще немає плейлістів.")
         return
+    text = "🎶 Твої плейлісти:\n" + "\n".join([f"• {p} {'(активний)' if p==current else ''}" for p in playlists])
+    await message.answer(text)
 
-    cur.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
-    current = cur.fetchone()[0]
-
-    text = "🎶 Твої плейлісти:\n" + "\n".join(
-        [f"• {p} {'(активний)' if p == current else ''}" for p in playlists]
-    )
-    bot.send_message(message.chat.id, text)
-
-
-# 🟢 Вибір плейлісту
-@bot.message_handler(commands=['chooseplaylist'])
-def choose_playlist(message):
+# ================== Вибір активного плейліста ==================
+@dp.message(Command("chooseplaylist"))
+async def choose_playlist(message: types.Message):
     user_id = message.from_user.id
-    cur.execute("SELECT name FROM playlists WHERE user_id=?", (user_id,))
-    playlists = cur.fetchall()
-
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT name FROM playlists WHERE user_id=?", (user_id,))
+        playlists = [row[0] for row in await cursor.fetchall()]
     if not playlists:
-        bot.send_message(message.chat.id, "❌ У тебе ще немає плейлістів. Створи один командою /createplaylist.")
+        await message.answer("❌ У тебе немає плейлістів.")
         return
-
     markup = types.InlineKeyboardMarkup()
-    for (name,) in playlists:
+    for name in playlists:
         markup.add(types.InlineKeyboardButton(name, callback_data=f"choose_{name}"))
-    bot.send_message(message.chat.id, "🎧 Обери плейліст:", reply_markup=markup)
+    await message.answer("🎧 Обери плейліст:", reply_markup=markup)
 
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("choose_"))
-def set_playlist(call):
+@dp.callback_query(lambda call: call.data.startswith("choose_"))
+async def set_playlist(call: types.CallbackQuery):
     name = call.data.replace("choose_", "")
     user_id = call.from_user.id
-    cur.execute("UPDATE user_state SET current_playlist=? WHERE user_id=?", (name, user_id))
-    conn.commit()
-    bot.edit_message_text(f"✅ Активний плейліст змінено на: {name}", call.message.chat.id, call.message.message_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE user_state SET current_playlist=? WHERE user_id=?", (name, user_id))
+        await db.commit()
+    await call.message.edit_text(f"✅ Активний плейліст змінено на: {name}")
 
-
-# 🟢 Завантаження треку
-@bot.message_handler(content_types=['audio'])
-def handle_audio(message):
+# ================== Завантаження треку ==================
+@dp.message(lambda message: message.audio is not None)
+async def handle_audio(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or "Без_імені"
     title = message.audio.title or message.audio.file_name or "Без назви"
     file_id = message.audio.file_id
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
+        current_playlist = (await cursor.fetchone())[0]
+        await db.execute("INSERT INTO tracks (user_id, username, title, file_id, playlist) VALUES (?, ?, ?, ?, ?)",
+                         (user_id, username, title, file_id, current_playlist))
+        await db.commit()
+    await message.answer(f"✅ Трек '{title}' додано у плейліст '{current_playlist}'.")
 
-    # Додаємо у поточний плейліст
-    cur.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
-    current_playlist = cur.fetchone()[0]
-
-    cur.execute("INSERT INTO tracks (user_id, username, title, file_id, playlist) VALUES (?, ?, ?, ?, ?)",
-                (user_id, username, title, file_id, current_playlist))
-    conn.commit()
-
-    bot.send_message(message.chat.id, f"✅ Трек '{title}' додано у плейліст '{current_playlist}'.")
-
-
-# 🟢 Режим відтворення
-@bot.message_handler(commands=['mode'])
-def change_mode(message):
+# ================== Зміна режиму ==================
+@dp.message(Command("mode"))
+async def change_mode(message: types.Message):
     markup = types.InlineKeyboardMarkup()
     for key, name in play_modes.items():
         markup.add(types.InlineKeyboardButton(name, callback_data=f"mode_{key}"))
-    bot.send_message(message.chat.id, "🎛 Обери режим відтворення:", reply_markup=markup)
+    await message.answer("🎛 Обери режим відтворення:", reply_markup=markup)
 
+@dp.callback_query(lambda call: call.data.startswith("mode_"))
+async def set_mode(call: types.CallbackQuery):
+    user_modes[call.from_user.id] = call.data.replace("mode_", "")
+    await call.message.edit_text(f"✅ Режим змінено на: {play_modes[user_modes[call.from_user.id]]}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("mode_"))
-def set_mode(call):
-    global current_mode
-    current_mode = call.data.replace("mode_", "")
-    bot.edit_message_text(f"✅ Режим змінено на: {play_modes[current_mode]}", call.message.chat.id, call.message.message_id)
-
-
-# 🟢 Відтворення
-@bot.message_handler(commands=['play'])
-def play_playlist(message):
+# ================== Відтворення плейліста ==================
+@dp.message(Command("play"))
+async def play_playlist(message: types.Message):
     user_id = message.from_user.id
-    cur.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
-    playlist = cur.fetchone()[0]
-
-    cur.execute("SELECT title, file_id FROM tracks WHERE user_id=? AND playlist=?", (user_id, playlist))
-    tracks = cur.fetchall()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT current_playlist FROM user_state WHERE user_id=?", (user_id,))
+        playlist = (await cursor.fetchone())[0]
+        cursor = await db.execute("SELECT title, file_id FROM tracks WHERE user_id=? AND playlist=?", (user_id, playlist))
+        tracks = await cursor.fetchall()
 
     if not tracks:
-        bot.send_message(message.chat.id, f"❌ У плейлісті '{playlist}' немає треків.")
+        await message.answer(f"❌ У плейлісті '{playlist}' немає треків.")
         return
 
-    bot.send_message(message.chat.id, f"🎶 Відтворюємо плейліст: {playlist}")
+    await message.answer(f"🎶 Відтворюємо плейліст: {playlist}")
 
-    if current_mode == "shuffle":
+    mode = user_modes.get(user_id, "sequential")
+    if mode == "shuffle":
         random.shuffle(tracks)
-    elif current_mode == "repeat_one":
+    elif mode == "repeat_one":
         tracks = [tracks[0]]
 
     for title, file_id in tracks:
-        bot.send_audio(message.chat.id, file_id, caption=f"🎵 {title}")
-        if current_mode == "repeat_one":
+        await bot.send_audio(message.chat.id, file_id, caption=f"🎵 {title}")
+        if mode == "repeat_one":
             break
 
+# ================== Головна функція ==================
+async def main():
+    await init_db()
+    print("🎵 Музичний бот запущено...")
+    await dp.start_polling(bot)
 
-bot.polling(none_stop=True)
+if __name__ == "__main__":
+    asyncio.run(main())
