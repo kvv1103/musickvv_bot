@@ -1,2 +1,3 @@
 BOT_TOKEN = "8484157544:AAH-VnpqojEVo3_obfOCDXULZ1sGXUTIYQs"
-MUSIC_DIR = "music"
+DB_NAME = "music_bot.db"
+MUSIC_FOLDER = "music"
