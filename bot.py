@@ -1,223 +1,118 @@
-import asyncio
+import os
+import sqlite3
 import random
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import Message
-import aiosqlite
-from config import BOT_TOKEN
-from database import init_db, DB_NAME
+from telebot import TeleBot, types
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# 🔹 Твій токен
+API_TOKEN = "ТВОЙ_АПІ_КЛЮЧ"
+bot = TeleBot(API_TOKEN)
 
-# Пам’ять для режимів відтворення
-user_play_modes = {}
+# 🔹 Підключення до постійної бази (НЕ створюється наново при оновленні коду)
+os.makedirs("db", exist_ok=True)
+conn = sqlite3.connect("db/music.db", check_same_thread=False)
+cur = conn.cursor()
 
-# ==================== Команди ====================
+# 🔹 Створення таблиць, якщо їх ще немає
+cur.execute("""
+CREATE TABLE IF NOT EXISTS tracks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    title TEXT,
+    file_id TEXT,
+    playlist TEXT
+)
+""")
+conn.commit()
 
-@dp.message(Command("start"))
-async def start_cmd(message: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
-            (message.from_user.id, message.from_user.username)
-        )
-        await db.commit()
-    await message.answer(
-        "🎶 Привіт! Я музичний бот.\n\n"
-        "📀 Надішли мені аудіо — я збережу його у твоїй бібліотеці.\n"
-        "🎧 Команди:\n"
-        "/mytracks — показати твої треки\n"
-        "/newplaylist <назва> — створити плейліст\n"
-        "/myplaylists — показати плейлісти\n"
-        "/addtoplaylist <id_плейліста> <id_треку> — додати трек до плейліста\n\n"
-        "Режими відтворення:\n"
-        "/play <id> — звичайне відтворення\n"
-        "/shuffle <id> — випадкове відтворення\n"
-        "/loop <id_треку> — повтор одного треку\n"
-        "/stop — зупинити повтор"
+
+# 🔹 Створення або вибір плейлісту
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id,
+        "🎵 Привіт! Надішли мені музичний файл, щоб додати його у свій плейліст.\n"
+        "Команди:\n"
+        "/mytracks – твій список треків\n"
+        "/play – відтворити плейліст\n"
+        "/mode – змінити режим відтворення"
     )
 
-# ================================================
 
-@dp.message(Command("mytracks"))
-async def show_my_tracks(message: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute(
-            "SELECT id, title FROM tracks WHERE user_id = ?",
-            (message.from_user.id,)
-        )
-        rows = await cursor.fetchall()
-    if not rows:
-        await message.answer("У тебе ще немає треків 🎵")
-        return
-    text = "\n".join([f"{tid}. {title}" for tid, title in rows])
-    await message.answer(f"🎧 Твої треки:\n{text}")
-
-# ================================================
-
-@dp.message(Command("newplaylist"))
-async def new_playlist(message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Вкажи назву плейліста: `/newplaylist Моя музика`")
-        return
-    name = args[1]
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT INTO playlists (user_id, name) VALUES (?, ?)",
-            (message.from_user.id, name)
-        )
-        await db.commit()
-    await message.answer(f"✅ Плейліст '{name}' створено!")
-
-# ================================================
-
-@dp.message(Command("myplaylists"))
-async def show_playlists(message: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute(
-            "SELECT id, name FROM playlists WHERE user_id = ?",
-            (message.from_user.id,)
-        )
-        playlists = await cursor.fetchall()
-    if not playlists:
-        await message.answer("У тебе ще немає плейлістів 🎶")
-        return
-    text = "\n".join([f"{pid}. {name}" for pid, name in playlists])
-    await message.answer(f"📂 Твої плейлісти:\n{text}")
-
-# ================================================
-
-@dp.message(Command("addtoplaylist"))
-async def add_to_playlist(message: Message):
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("Вкажи: `/addtoplaylist <id_плейліста> <id_треку>`")
-        return
-    playlist_id, track_id = args[1], args[2]
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)",
-            (playlist_id, track_id)
-        )
-        await db.commit()
-    await message.answer("✅ Трек додано до плейліста!")
-
-# ================================================
-
-@dp.message(lambda msg: msg.audio is not None)
-async def save_audio(message: Message):
-    file_id = message.audio.file_id
+# 🔹 Завантаження треку
+@bot.message_handler(content_types=['audio'])
+def handle_audio(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Без_імені"
     title = message.audio.title or message.audio.file_name or "Без назви"
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT INTO tracks (user_id, file_id, title) VALUES (?, ?, ?)",
-            (message.from_user.id, file_id, title)
-        )
-        await db.commit()
-    await message.answer(f"✅ Трек '{title}' збережено!")
+    file_id = message.audio.file_id
 
-# ================================================
-# 🎧 Відтворення треків з плейліста
-# ================================================
+    cur.execute("INSERT INTO tracks (user_id, username, title, file_id, playlist) VALUES (?, ?, ?, ?, ?)",
+                (user_id, username, title, file_id, "default"))
+    conn.commit()
 
-@dp.message(Command("play"))
-async def play_playlist(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Вкажи ID плейліста: `/play 1`")
-        return
-    playlist_id = args[1]
+    bot.send_message(message.chat.id, f"✅ Трек '{title}' додано у твій плейліст.")
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("""
-            SELECT tracks.file_id, tracks.title
-            FROM playlist_tracks
-            JOIN tracks ON playlist_tracks.track_id = tracks.id
-            WHERE playlist_tracks.playlist_id = ?
-        """, (playlist_id,))
-        tracks = await cursor.fetchall()
+
+# 🔹 Перегляд своїх треків
+@bot.message_handler(commands=['mytracks'])
+def list_tracks(message):
+    user_id = message.from_user.id
+    cur.execute("SELECT title FROM tracks WHERE user_id = ?", (user_id,))
+    tracks = cur.fetchall()
 
     if not tracks:
-        await message.answer("❌ У цьому плейлісті немає треків.")
-        return
+        bot.send_message(message.chat.id, "❌ У тебе ще немає треків.")
+    else:
+        text = "🎧 Твої треки:\n" + "\n".join([f"• {t[0]}" for t in tracks])
+        bot.send_message(message.chat.id, text)
 
-    user_play_modes[message.from_user.id] = "normal"
-    await message.answer("▶️ Відтворення підряд...")
 
-    for file_id, title in tracks:
-        await message.answer_audio(audio=file_id, caption=title)
+# 🔹 Глобальна змінна для режиму відтворення
+play_modes = {
+    "sequential": "▶️ Підряд усі",
+    "shuffle": "🔀 Випадково",
+    "repeat_one": "🔂 Повтор поточного"
+}
+current_mode = "sequential"
 
-# ================================================
 
-@dp.message(Command("shuffle"))
-async def shuffle_playlist(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Вкажи ID плейліста: `/shuffle 1`")
-        return
-    playlist_id = args[1]
+# 🔹 Зміна режиму
+@bot.message_handler(commands=['mode'])
+def change_mode(message):
+    global current_mode
+    markup = types.InlineKeyboardMarkup()
+    for key, name in play_modes.items():
+        markup.add(types.InlineKeyboardButton(name, callback_data=f"mode_{key}"))
+    bot.send_message(message.chat.id, "🎛 Обери режим відтворення:", reply_markup=markup)
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("""
-            SELECT tracks.file_id, tracks.title
-            FROM playlist_tracks
-            JOIN tracks ON playlist_tracks.track_id = tracks.id
-            WHERE playlist_tracks.playlist_id = ?
-        """, (playlist_id,))
-        tracks = await cursor.fetchall()
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mode_"))
+def set_mode(call):
+    global current_mode
+    current_mode = call.data.replace("mode_", "")
+    bot.edit_message_text(f"✅ Режим змінено на: {play_modes[current_mode]}", call.message.chat.id, call.message.message_id)
+
+
+# 🔹 Відтворення
+@bot.message_handler(commands=['play'])
+def play_playlist(message):
+    user_id = message.from_user.id
+    cur.execute("SELECT title, file_id FROM tracks WHERE user_id = ?", (user_id,))
+    tracks = cur.fetchall()
 
     if not tracks:
-        await message.answer("❌ У цьому плейлісті немає треків.")
+        bot.send_message(message.chat.id, "❌ Немає треків для відтворення.")
         return
 
-    random.shuffle(tracks)
-    user_play_modes[message.from_user.id] = "shuffle"
-    await message.answer("🔀 Випадкове відтворення...")
+    if current_mode == "shuffle":
+        random.shuffle(tracks)
+    elif current_mode == "repeat_one":
+        tracks = [tracks[0]]
 
-    for file_id, title in tracks:
-        await message.answer_audio(audio=file_id, caption=title)
+    for title, file_id in tracks:
+        bot.send_audio(message.chat.id, file_id, caption=f"🎵 {title}")
+        if current_mode == "repeat_one":
+            break
 
-# ================================================
 
-@dp.message(Command("loop"))
-async def loop_track(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer("Вкажи ID треку: `/loop 3`")
-        return
-    track_id = args[1]
-
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT file_id, title FROM tracks WHERE id = ?", (track_id,))
-        track = await cursor.fetchone()
-
-    if not track:
-        await message.answer("❌ Трек не знайдено.")
-        return
-
-    file_id, title = track
-    user_play_modes[message.from_user.id] = "loop"
-    await message.answer(f"🔁 Повторюю трек '{title}'. Напиши `/stop`, щоб зупинити.")
-
-    while user_play_modes.get(message.from_user.id) == "loop":
-        await message.answer_audio(audio=file_id, caption=title)
-        await asyncio.sleep(5)  # затримка між повторами
-
-# ================================================
-
-@dp.message(Command("stop"))
-async def stop_loop(message: types.Message):
-    user_play_modes[message.from_user.id] = "stopped"
-    await message.answer("⏹️ Відтворення зупинено.")
-
-# ================================================
-
-async def main():
-    print("🎵 Запуск музичного бота...")
-    await init_db()
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+bot.polling(none_stop=True)
