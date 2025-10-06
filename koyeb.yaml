@@ -8,6 +8,6 @@ services:
         - pip install -r requirements.txt
     env:
       - key: BOT_TOKEN
-        value: "сюди_свій_токен"
+        value: "8484157544:AAH-VnpqojEVo3_obfOCDXULZ1sGXUTIYQs"
     run:
       command: python bot.py
