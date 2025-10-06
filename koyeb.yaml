@@ -1,0 +1,13 @@
+name: musickvv-bot
+services:
+  - name: bot
+    type: web
+    runtime: python
+    build:
+      commands:
+        - pip install -r requirements.txt
+    env:
+      - key: BOT_TOKEN
+        value: "сюди_свій_токен"
+    run:
+      command: python bot.py
