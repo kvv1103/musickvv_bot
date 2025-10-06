@@ -1,7 +1,7 @@
 import aiosqlite
 
 async def init_db():
-    async with aiosqlite.connect("music_bot.db") as db:
+    async with aiosqlite.connect("music/music.db") as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS playlists (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
