@@ -39,7 +39,7 @@ async def handle_audio(message: types.Message):
     file_id = message.audio.file_id
     title = message.audio.title or "Без назви"
 
-    async with aiosqlite.connect("music_bot.db") as db:
+    async with aiosqlite.connect(init_db) as db:
         await db.execute(
             "INSERT INTO tracks (playlist_id, title, file_id) VALUES (1, ?, ?)",
             (title, file_id)
@@ -80,7 +80,7 @@ async def play_cmd(message: types.Message):
     user_id = message.from_user.id
     mode = play_modes.get(user_id, "all")
 
-    async with aiosqlite.connect("music_bot.db") as db:
+    async with aiosqlite.connect(init_db) as db:
         async with db.execute("SELECT title, file_id FROM tracks") as cursor:
             tracks = await cursor.fetchall()
 
