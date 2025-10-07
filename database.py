@@ -31,7 +31,7 @@ async def init_db():
             )
         """)
 
-        # Головний плейліст і налаштування
+        # Додаємо базові записи, якщо ще немає
         await db.execute("""
             INSERT OR IGNORE INTO playlists (id, user_id, name)
             VALUES (1, 0, 'Головний плейліст')
@@ -62,6 +62,15 @@ async def get_all_tracks():
             return await cursor.fetchall()
 
 
+# 🎵 Отримати улюблені треки
+async def get_favorite_tracks():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, title, file_id FROM tracks WHERE favorite = 1"
+        ) as cursor:
+            return await cursor.fetchall()
+
+
 # 🗑 Видалити трек
 async def delete_track(track_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -69,7 +78,7 @@ async def delete_track(track_id: int):
         await db.commit()
 
 
-# ⭐ Змінити статус "улюбленого"
+# ⭐ Перемикач “Обране”
 async def toggle_favorite(track_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
@@ -85,7 +94,7 @@ async def toggle_favorite(track_id: int):
             await db.commit()
 
 
-# ⚙️ Отримати/встановити режим
+# ⚙️ Режими
 async def get_mode():
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT mode FROM settings WHERE id = 1") as cursor:
