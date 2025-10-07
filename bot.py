@@ -4,9 +4,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from config import BOT_TOKEN
 from database import (
-    init_db, add_track, get_all_tracks,
-    delete_track, toggle_favorite,
-    get_mode, set_mode
+    init_db, add_track, get_all_tracks, get_favorite_tracks,
+    delete_track, toggle_favorite, get_mode, set_mode
 )
 
 bot = Bot(token=BOT_TOKEN)
@@ -53,7 +52,7 @@ async def select_mode(callback: types.CallbackQuery):
     await callback.message.edit_text(f"✅ Режим встановлено: {mode}")
 
 
-# ▶️ /play — відтворення
+# ▶️ /play — відтворення треків
 @dp.message(Command("play"))
 async def play_tracks(message: types.Message):
     tracks = await get_all_tracks()
@@ -63,16 +62,17 @@ async def play_tracks(message: types.Message):
         await message.answer("❌ У плейлісті ще немає треків.")
         return
 
-    # Режим "випадково"
+    # Випадковий режим
     if mode == "shuffle":
         random.shuffle(tracks)
 
-    # Режим "один трек"
+    # Один трек
     if mode == "single":
         track = random.choice(tracks)
         await message.answer_audio(track[2], caption=f"🔂 {track[1]}")
         return
 
+    # Підряд
     await message.answer(f"🎧 Відтворення {len(tracks)} трек(ів):")
     for track_id, title, file_id, fav in tracks:
         fav_mark = "⭐" if fav else ""
@@ -81,7 +81,7 @@ async def play_tracks(message: types.Message):
     await message.answer("✅ Відтворення завершено.")
 
 
-# 🎵 /playlist — перегляд усіх треків
+# 🎵 /playlist — усі треки
 @dp.message(Command("playlist"))
 async def show_playlist(message: types.Message):
     tracks = await get_all_tracks()
@@ -111,13 +111,44 @@ async def remove_track(callback: types.CallbackQuery):
     await callback.message.edit_text("🗑 Трек видалено з плейліста.")
 
 
-# ⭐ Додавання/зняття “Обраного”
+# ⭐ Улюблені / зняття
 @dp.callback_query(F.data.startswith("fav:"))
 async def fav_track(callback: types.CallbackQuery):
     track_id = int(callback.data.split(":")[1])
     await toggle_favorite(track_id)
-    await callback.answer("Статус оновлено ⭐")
+    await callback.answer("⭐ Статус оновлено")
     await callback.message.edit_text("✅ Статус обраного оновлено.")
+
+
+# 💖 /favorites — тільки улюблені
+@dp.message(Command("favorites"))
+async def show_favorites(message: types.Message):
+    favorites = await get_favorite_tracks()
+    if not favorites:
+        await message.answer("❌ У тебе ще немає улюблених треків.")
+        return
+
+    await message.answer(f"💖 Улюблені треки ({len(favorites)}):")
+    for track_id, title, file_id in favorites:
+        buttons = [
+            types.InlineKeyboardButton(text="💔 Забрати", callback_data=f"fav:{track_id}"),
+            types.InlineKeyboardButton(text="▶️ Грати", callback_data=f"playone:{track_id}")
+        ]
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[buttons])
+        await message.answer(f"⭐ {title}", reply_markup=keyboard)
+
+
+# ▶️ Відтворення одного улюбленого треку
+@dp.callback_query(F.data.startswith("playone:"))
+async def play_one_fav(callback: types.CallbackQuery):
+    track_id = int(callback.data.split(":")[1])
+    tracks = await get_favorite_tracks()
+    for tid, title, file_id in tracks:
+        if tid == track_id:
+            await callback.message.answer_audio(file_id, caption=f"🎵 {title}")
+            await callback.answer("▶️ Відтворюю трек")
+            return
+    await callback.answer("⚠️ Трек не знайдено.")
 
 
 # 🟢 Запуск
