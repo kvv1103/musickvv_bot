@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from config import BOT_TOKEN
 from database import (
     init_db, add_track, get_all_tracks, get_favorite_tracks,
-    delete_track, toggle_favorite, get_mode, set_mode
+    delete_track, toggle_favorite, get_mode, set_mode, clear_all
 )
 
 bot = Bot(token=BOT_TOKEN)
@@ -102,25 +102,7 @@ async def show_playlist(message: types.Message):
         await message.answer(f"{fav_mark} {title}", reply_markup=keyboard)
 
 
-# 🗑 Видалення треку
-@dp.callback_query(F.data.startswith("del:"))
-async def remove_track(callback: types.CallbackQuery):
-    track_id = int(callback.data.split(":")[1])
-    await delete_track(track_id)
-    await callback.answer("Трек видалено ✅")
-    await callback.message.edit_text("🗑 Трек видалено з плейліста.")
-
-
-# ⭐ Улюблені / зняття
-@dp.callback_query(F.data.startswith("fav:"))
-async def fav_track(callback: types.CallbackQuery):
-    track_id = int(callback.data.split(":")[1])
-    await toggle_favorite(track_id)
-    await callback.answer("⭐ Статус оновлено")
-    await callback.message.edit_text("✅ Статус обраного оновлено.")
-
-
-# 💖 /favorites — тільки улюблені
+# 💖 /favorites — улюблені треки
 @dp.message(Command("favorites"))
 async def show_favorites(message: types.Message):
     favorites = await get_favorite_tracks()
@@ -138,6 +120,24 @@ async def show_favorites(message: types.Message):
         await message.answer(f"⭐ {title}", reply_markup=keyboard)
 
 
+# 🗑 Видалення одного треку
+@dp.callback_query(F.data.startswith("del:"))
+async def remove_track(callback: types.CallbackQuery):
+    track_id = int(callback.data.split(":")[1])
+    await delete_track(track_id)
+    await callback.answer("Трек видалено ✅")
+    await callback.message.edit_text("🗑 Трек видалено з плейліста.")
+
+
+# ⭐ Улюблені / зняття
+@dp.callback_query(F.data.startswith("fav:"))
+async def fav_track(callback: types.CallbackQuery):
+    track_id = int(callback.data.split(":")[1])
+    await toggle_favorite(track_id)
+    await callback.answer("⭐ Статус оновлено")
+    await callback.message.edit_text("✅ Статус обраного оновлено.")
+
+
 # ▶️ Відтворення одного улюбленого треку
 @dp.callback_query(F.data.startswith("playone:"))
 async def play_one_fav(callback: types.CallbackQuery):
@@ -149,6 +149,30 @@ async def play_one_fav(callback: types.CallbackQuery):
             await callback.answer("▶️ Відтворюю трек")
             return
     await callback.answer("⚠️ Трек не знайдено.")
+
+
+# 🧹 /clear — очищення бази
+@dp.message(Command("clear"))
+async def confirm_clear(message: types.Message):
+    buttons = [
+        [
+            types.InlineKeyboardButton(text="✅ Так, очистити", callback_data="clear:yes"),
+            types.InlineKeyboardButton(text="❌ Ні, скасувати", callback_data="clear:no")
+        ]
+    ]
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("⚠️ Ви впевнені, що хочете **очистити базу**?", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data.startswith("clear:"))
+async def handle_clear(callback: types.CallbackQuery):
+    if callback.data == "clear:yes":
+        await clear_all()
+        await callback.answer("✅ Очищено")
+        await callback.message.edit_text("🧹 Усі треки та налаштування видалено.")
+    else:
+        await callback.answer("❌ Скасовано")
+        await callback.message.edit_text("Дія скасована.")
 
 
 # 🟢 Запуск
