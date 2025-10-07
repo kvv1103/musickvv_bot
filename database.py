@@ -31,7 +31,6 @@ async def init_db():
             )
         """)
 
-        # Додаємо базові записи, якщо ще немає
         await db.execute("""
             INSERT OR IGNORE INTO playlists (id, user_id, name)
             VALUES (1, 0, 'Головний плейліст')
@@ -78,7 +77,16 @@ async def delete_track(track_id: int):
         await db.commit()
 
 
-# ⭐ Перемикач “Обране”
+# 🗑 Очистити базу (всі треки і налаштування)
+async def clear_all():
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM tracks")
+        await db.execute("DELETE FROM playlists WHERE id != 1")
+        await db.execute("UPDATE settings SET mode = 'sequential' WHERE id = 1")
+        await db.commit()
+
+
+# ⭐ Перемикач "Обране"
 async def toggle_favorite(track_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
