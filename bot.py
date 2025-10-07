@@ -11,6 +11,36 @@ from database import (
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# 👋 Команда /start — головне меню з кнопками
+@dp.message(Command("start"))
+async def start_command(message: types.Message):
+    keyboard = types.ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        keyboard=[
+            [
+                types.KeyboardButton(text="▶️ Грати"),
+                types.KeyboardButton(text="📂 Плейліст"),
+            ],
+            [
+                types.KeyboardButton(text="💖 Улюблене"),
+                types.KeyboardButton(text="⚙️ Режим"),
+            ],
+            [
+                types.KeyboardButton(text="🧹 Очистити базу"),
+                types.KeyboardButton(text="🧩 Debug"),
+            ]
+        ]
+    )
+
+    text = (
+        "🎵 <b>Привіт!</b>\n"
+        "Я музичний бот 🎧\n\n"
+        "📀 Мої можливості:\n"
+        "• Надішли аудіо — я додам його у плейліст\n"
+        "• Натисни кнопку в  меню, щоб слухати або керувати треками 🎶"
+    )
+
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 # 🔹 Ініціалізація бази
 @dp.startup()
@@ -173,6 +203,54 @@ async def handle_clear(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Скасовано")
         await callback.message.edit_text("Дія скасована.")
+
+# 🧩 /debug — показати вміст бази
+@dp.message(Command("debug"))
+async def debug_db(message: types.Message):
+    tracks = await get_all_tracks()
+    if not tracks:
+        await message.answer("❌ У базі немає треків.")
+        return
+
+    text = "📦 <b>Вміст бази:</b>\n\n"
+    for t in tracks:
+        track_id, title, file_id, fav = t
+        fav_mark = "⭐" if fav else " "
+        # скорочуємо file_id для зручності
+        short_id = file_id[:10] + "..." if file_id else "❌ (порожній)"
+        text += f"ID: {track_id} | {fav_mark} {title}\n🆔 {short_id}\n\n"
+
+    await message.answer(text, parse_mode="HTML")
+
+# ▶️ Кнопка “Грати”
+@dp.message(F.text == "▶️ Грати")
+async def button_play(message: types.Message):
+    await play_tracks(message)
+
+# 📂 Кнопка “Плейліст”
+@dp.message(F.text == "📂 Плейліст")
+async def button_playlist(message: types.Message):
+    await show_playlist(message)
+
+# 💖 Кнопка “Улюблене”
+@dp.message(F.text == "💖 Улюблене")
+async def button_fav(message: types.Message):
+    await show_favorites(message)
+
+# ⚙️ Кнопка “Режим”
+@dp.message(F.text == "⚙️ Режим")
+async def button_mode(message: types.Message):
+    await change_mode(message)
+
+# 🧹 Кнопка “Очистити базу”
+@dp.message(F.text == "🧹 Очистити базу")
+async def button_clear(message: types.Message):
+    await confirm_clear(message)
+
+# 🧩 Кнопка “Debug”
+@dp.message(F.text == "🧩 Debug")
+async def button_debug(message: types.Message):
+    await debug_db(message)
 
 
 # 🟢 Запуск
